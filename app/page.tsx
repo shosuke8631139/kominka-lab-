@@ -19,6 +19,14 @@ import {
   NATIONAL_SUBSIDIES,
   type Prefecture,
 } from "@/data/subsidies";
+import {
+  AREA_TIERS,
+  ROSENKA_LOOKUP_URL,
+  analyzePropertyFinancials,
+  detectAreaTier,
+  type AreaTierId,
+  type PropertyAnalysis,
+} from "@/lib/area-analysis";
 
 // 素人→プロの自然な流れ順
 const STEPS = ["知識", "物件", "確認", "タスク", "メモ"] as const;
@@ -58,7 +66,7 @@ interface Property {
 const newProperty = (): Property => ({
   id: Date.now().toString(),
   name: "",
-  location: "鹿屋市",
+  location: "",
   price: "",
   area: "",
   landArea: "",
@@ -94,186 +102,22 @@ export default function KominkaPage() {
   const [parseResult, setParseResult] = useState<string | null>(null);
   const [fetchUrl, setFetchUrl] = useState("");
   const [fetchLoading, setFetchLoading] = useState(false);
-
-  // ローカル物件分析（API不使用）
-  type PropertyAnalysis = {
-    routekaEstimate: string;
-    routekaPerSqm: number;
-    landValueEstimate: string;
-    landValueWan: number;
-    buildingValueEstimate: string;
-    buildingValueWan: number;
-    totalValueWan: number;
-    priceJudgment: string;
-    recommendedRent: string;
-    recommendedRentWan: number;
-    grossYield: number;
-    netYield: number;
-    paybackYears: number;
-    areaMarket: string;
-    strengths: string[];
-    risks: string[];
-    overallScore: number;
-    overallComment: string;
-  };
   const [analysisMap, setAnalysisMap] = useState<Record<string, PropertyAnalysis>>({});
+  /** 物件ごとのエリア区分（auto=所在地から自動） */
+  const [areaTierByProp, setAreaTierByProp] = useState<Record<string, AreaTierId | "auto">>({});
 
-  // エリア別路線価テーブル（知識ライブラリの公示地価データより）
-  const LAND_PRICE_TABLE: { keywords: string[]; rosenkaPerSqm: number; marketPerSqm: number; label: string; market: string }[] = [
-    { keywords: ["輝北", "串良", "大隅"], rosenkaPerSqm: 3500, marketPerSqm: 4200, label: "鹿屋市（山間部）", market: "人口流出が進む山間部。0円物件が多く最安クラス。入居者獲得にはSNS発信が必須。" },
-    { keywords: ["鹿屋", "かのや", "吾平"], rosenkaPerSqm: 11000, marketPerSqm: 13700, label: "鹿屋市（市街地周辺）", market: "大隅半島の中核都市。住宅需要は限定的だが、自衛隊・病院関係者等の賃貸需要あり。DIY可物件は差別化になる。" },
-    { keywords: ["南大隅", "根占", "佐多", "錦江"], rosenkaPerSqm: 2000, marketPerSqm: 2500, label: "南大隅町周辺", market: "大隅半島最南端。地価は九州最安クラス。移住者向け古民家再生の先進地でもある。" },
-    { keywords: ["垂水", "曽於", "志布志", "肝付"], rosenkaPerSqm: 5000, marketPerSqm: 6200, label: "大隅半島（中部）", market: "農業・漁業が盛んな地域。賃貸需要は少ないが、農家民宿・農的暮らし希望者への訴求が有効。" },
-    { keywords: ["霧島", "国分", "姶良", "加治木"], rosenkaPerSqm: 20000, marketPerSqm: 25000, label: "霧島・姶良エリア", market: "鹿児島市のベッドタウン。人口増加中で賃貸需要も安定。空き家再生でも入居者確保しやすい。" },
-    { keywords: ["鹿児島市", "鹿児島", "郡山", "谷山", "坂之上"], rosenkaPerSqm: 40000, marketPerSqm: 50000, label: "鹿児島市（郊外）", market: "県都で需要が最も安定。郊外でも月3〜5万円の賃貸需要がある。リノベ物件は高値で貸せる。" },
-    { keywords: ["天文館", "中央", "高見馬場", "武之橋"], rosenkaPerSqm: 300000, marketPerSqm: 400000, label: "鹿児島市（中心部）", market: "県内最高地価。古民家再生よりもテナント・マンション用途が中心。" },
-    { keywords: ["都城", "三股"], rosenkaPerSqm: 15000, marketPerSqm: 19000, label: "都城市", market: "宮崎県南部の中核都市。鹿屋と隣接。賃貸需要は鹿屋より高めで安定。" },
-    { keywords: ["高原", "小林", "えびの"], rosenkaPerSqm: 9000, marketPerSqm: 11000, label: "宮崎（山間部）", market: "霧島山系近くの自然豊かな地域。移住希望者向け古民家の需要が高まっている。" },
-    { keywords: ["宮崎市", "宮崎"], rosenkaPerSqm: 45000, marketPerSqm: 56000, label: "宮崎市", market: "宮崎県の中心都市。地価は上昇傾向（+3.9%）。移住者・テレワーカーの流入が多い。" },
-    { keywords: ["延岡", "日向", "日南", "串間", "高鍋", "国富"], rosenkaPerSqm: 22000, marketPerSqm: 27000, label: "宮崎（地方都市）", market: "宮崎県内の地方都市。工場・港湾関連の雇用があり一定の賃貸需要がある。" },
-  ];
-
-  const analyzeProperty = (prop: Property) => {
-
-    // エリアマッチング
-    const loc = prop.location || "";
-    let areaInfo = LAND_PRICE_TABLE.find(a => a.keywords.some(k => loc.includes(k)));
-    if (!areaInfo) {
-      // フォールバック: 鹿屋市デフォルト
-      areaInfo = LAND_PRICE_TABLE[1];
-    }
-
-    const rosenka = areaInfo.rosenkaPerSqm;
-    const market = areaInfo.marketPerSqm;
-
-    // 土地面積パース（例: "200㎡", "200m2", "60坪"）
-    const landAreaStr = prop.landArea || "";
-    let landSqm = 0;
-    const sqmMatch = landAreaStr.match(/([0-9.]+)\s*[㎡m²]/);
-    const tsuboMatch = landAreaStr.match(/([0-9.]+)\s*坪/);
-    if (sqmMatch) landSqm = parseFloat(sqmMatch[1]);
-    else if (tsuboMatch) landSqm = parseFloat(tsuboMatch[1]) * 3.306;
-
-    // 建物面積パース
-    const areaStr = prop.area || "";
-    let buildSqm = 0;
-    const bsqmMatch = areaStr.match(/([0-9.]+)\s*[㎡m²]/);
-    const btsuboMatch = areaStr.match(/([0-9.]+)\s*坪/);
-    if (bsqmMatch) buildSqm = parseFloat(bsqmMatch[1]);
-    else if (btsuboMatch) buildSqm = parseFloat(btsuboMatch[1]) * 3.306;
-
-    // 築年数パース
-    const builtStr = prop.builtYear || "";
-    let ageYears = 40; // デフォルト40年
-    const ageMatch = builtStr.match(/築\s*([0-9]+)\s*年/);
-    const yearMatch = builtStr.match(/([0-9]{4})\s*年/);
-    if (ageMatch) ageYears = parseInt(ageMatch[1]);
-    else if (yearMatch) ageYears = 2026 - parseInt(yearMatch[1]);
-
-    // 価格パース（万円）
-    const priceStr = prop.price || "";
-    let priceMansoku = 0;
-    const priceWanMatch = priceStr.match(/([0-9,，]+)\s*万円/);
-    const priceZeroMatch = priceStr.match(/^(0|無償|無料|格安)$/i);
-    if (priceZeroMatch) priceMansoku = 0;
-    else if (priceWanMatch) priceMansoku = parseFloat(priceWanMatch[1].replace(/[,，]/g, ""));
-
-    // 土地価値計算
-    const landValueWan = landSqm > 0 ? Math.round((landSqm * market) / 10000) : 0;
-    const landValueEstimate = landSqm > 0
-      ? `${loc}付近の実勢価格 ${market.toLocaleString()}円/㎡ × ${Math.round(landSqm)}㎡ ≒ ${landValueWan}万円`
-      : "土地面積が未入力のため計算できません";
-
-    // 建物価値計算（木造: 法定耐用年数22年、残価率考慮）
-    const depRate = Math.max(0, 1 - ageYears / 22);
-    const newBuildCostPerTsubo = 180000; // 新築坪単価18万円（円/坪・木造の目安）
-    const buildTsubo = buildSqm > 0 ? buildSqm / 3.306 : 0;
-    const buildingValueWan = buildTsubo > 0
-      ? Math.round((buildTsubo * newBuildCostPerTsubo * depRate) / 10000)
-      : 0;
-    const buildingValueEstimate = buildSqm > 0
-      ? `新築坪単価18万円 × ${buildTsubo.toFixed(1)}坪（${Math.round(buildSqm)}㎡）× 残価率${Math.round(depRate * 100)}%（築${ageYears}年）≒ ${buildingValueWan}万円`
-      : "建物面積が未入力のため計算できません";
-
-    const totalValueWan = landValueWan + buildingValueWan;
-
-    // 売出価格との比較
-    let priceJudgment = "価格不明のため比較できません";
-    if (priceMansoku === 0 && totalValueWan > 0) priceJudgment = `無償譲渡 → 適正価格${totalValueWan}万円に対して超割安`;
-    else if (priceMansoku > 0 && totalValueWan > 0) {
-      const ratio = priceMansoku / totalValueWan;
-      if (ratio < 0.5) priceJudgment = `売出${priceMansoku}万円 vs 適正${totalValueWan}万円 → 割安（約${Math.round(ratio * 100)}%）`;
-      else if (ratio < 0.9) priceJudgment = `売出${priceMansoku}万円 vs 適正${totalValueWan}万円 → やや割安`;
-      else if (ratio < 1.1) priceJudgment = `売出${priceMansoku}万円 vs 適正${totalValueWan}万円 → 相場通り`;
-      else priceJudgment = `売出${priceMansoku}万円 vs 適正${totalValueWan}万円 → 割高（要交渉）`;
-    }
-
-    // 推奨賃料（エリア相場 × 建物面積ベース）
-    const rentPerSqm = rosenka < 5000 ? 300 : rosenka < 15000 ? 500 : rosenka < 40000 ? 800 : 1200;
-    const rawRentWan = buildSqm > 0 ? Math.round(buildSqm * rentPerSqm / 10000 * 10) / 10 : 0;
-    const recommendedRentWan = rawRentWan > 0 ? Math.max(rawRentWan, 2) : 3;
-    const recommendedRent = `${areaInfo.label}の賃料相場（約${rentPerSqm}円/㎡）× 建物面積${Math.round(buildSqm)}㎡ = 月${recommendedRentWan}万円程度`;
-
-    // 利回り計算（売出価格ベース、なければ適正価格ベース）
-    const basePriceWan = priceMansoku > 0 ? priceMansoku : totalValueWan;
-    const annualRentWan = recommendedRentWan * 12;
-    const grossYield = basePriceWan > 0 ? Math.round(annualRentWan / basePriceWan * 1000) / 10 : 0;
-    const netYield = Math.round(grossYield * 0.72 * 10) / 10; // 空室10%・経費20%
-    const paybackYears = recommendedRentWan > 0 ? Math.round(basePriceWan / annualRentWan * 10) / 10 : 0;
-
-    // 強み・リスク・スコア（エリアと築年数ベース）
-    const strengths: string[] = [];
-    const risks: string[] = [];
-
-    if (priceMansoku === 0) strengths.push("無償譲渡で初期費用を大幅に抑えられる");
-    if (priceMansoku > 0 && totalValueWan > 0 && priceMansoku < totalValueWan * 0.7) strengths.push("適正価格より割安で取得できる");
-    if (landSqm > 150) strengths.push(`広い敷地（${Math.round(landSqm)}㎡）で駐車場・庭の余裕がある`);
-    if (grossYield >= 15) strengths.push(`表面利回り${grossYield}%と高水準`);
-    if (rosenka < 10000) strengths.push("低地価エリアで固定資産税が安い");
-    if (strengths.length < 2) strengths.push("地方移住・テレワーク需要を取り込める立地");
-
-    if (ageYears > 35) risks.push(`築${ageYears}年超のため構造・設備の大規模修繕が必要な可能性`);
-    if (rosenka < 5000) risks.push("地価が低く、将来的な売却・資産価値回収が難しい");
-    if (rosenka < 8000) risks.push("エリアの賃貸需要が限定的。入居者獲得にSNS発信が必須");
-    if (landSqm === 0 || buildSqm === 0) risks.push("面積情報が未入力のため正確な計算ができていません");
-    if (risks.length < 2) risks.push("空室期間が長引くと収益計画が狂う可能性がある");
-
-    let score = 5;
-    if (grossYield >= 20) score += 2;
-    else if (grossYield >= 10) score += 1;
-    if (priceMansoku === 0) score += 1;
-    if (ageYears > 50) score -= 1;
-    if (landSqm > 200) score += 1;
-    if (rosenka < 5000) score -= 1;
-    score = Math.max(1, Math.min(10, score));
-
-    const overallComment = `${areaInfo.label}エリアの物件です。${
-      grossYield >= 15 ? "利回りは高水準で収益性は良好。" :
-      grossYield >= 8 ? "利回りは標準的。" : "利回りは低め。改修費と家賃設定の見直しを。"
-    }${ageYears > 40 ? "築年数が経っているため、事前の構造診断を強くおすすめします。" : ""}`;
-
-    const analysis: PropertyAnalysis = {
-      routekaEstimate: `${areaInfo.label} 路線価目安 ${rosenka.toLocaleString()}円/㎡（実勢 ${market.toLocaleString()}円/㎡）`,
-      routekaPerSqm: rosenka,
-      landValueEstimate,
-      landValueWan,
-      buildingValueEstimate,
-      buildingValueWan,
-      totalValueWan,
-      priceJudgment,
-      recommendedRent,
-      recommendedRentWan,
-      grossYield,
-      netYield,
-      paybackYears,
-      areaMarket: areaInfo.market,
-      strengths,
-      risks,
-      overallScore: score,
-      overallComment,
-    };
-
-    setAnalysisMap(prev => ({ ...prev, [prop.id]: analysis }));
+  const analyzeProperty = (prop: Property, tierOverride?: AreaTierId | "auto") => {
+    const tierKey = tierOverride ?? areaTierByProp[prop.id] ?? "auto";
+    const tierId = tierKey === "auto" ? undefined : tierKey;
+    const analysis = analyzePropertyFinancials({
+      location: prop.location,
+      price: prop.price,
+      area: prop.area,
+      landArea: prop.landArea,
+      builtYear: prop.builtYear,
+      tierId,
+    });
+    setAnalysisMap((prev) => ({ ...prev, [prop.id]: analysis }));
   };
 
   const fetchProperty = async (propId: string) => {
@@ -782,7 +626,7 @@ export default function KominkaPage() {
                 { label: "表面利回り",    vals: active.map(p => analysisMap[p.id] ? `${analysisMap[p.id].grossYield.toFixed(1)}%` : "未計算"), bestCol: yieldBest, higherIsBetter: true },
                 { label: "実質利回り",    vals: active.map(p => analysisMap[p.id] ? `${analysisMap[p.id].netYield.toFixed(1)}%` : "未計算"), bestCol: netBest, higherIsBetter: true },
                 { label: "推定適正価格",  vals: active.map(p => analysisMap[p.id] ? `${analysisMap[p.id].totalValueWan}万円` : "未計算"), bestCol: valBest, higherIsBetter: true },
-                { label: "路線価目安",    vals: active.map(p => analysisMap[p.id] ? `${analysisMap[p.id].routekaPerSqm.toLocaleString()}円/㎡` : "未計算"), bestCol: -1 },
+                { label: "路線価目安（全国区分）", vals: active.map(p => analysisMap[p.id] ? `${analysisMap[p.id].routekaPerSqm.toLocaleString()}円/㎡` : "未計算"), bestCol: -1 },
                 { label: "総合スコア",    vals: active.map(p => analysisMap[p.id] ? `${analysisMap[p.id].overallScore}/10点` : "未計算"), bestCol: bestIdx(active.map(p => analysisMap[p.id]?.overallScore ?? null), true), higherIsBetter: true },
               ];
 
@@ -969,7 +813,7 @@ export default function KominkaPage() {
                         <label className="block text-[10px] font-semibold text-gray-500 mb-1">所在地</label>
                         <input type="text" value={prop.location}
                           onChange={(e) => updateProperty(prop.id, { location: e.target.value })}
-                          placeholder="例：鹿屋市〇〇町"
+                          placeholder="例：○○県○○市〇〇町"
                           className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#8B7355]" />
                       </div>
                       <div className="grid grid-cols-2 gap-3">
@@ -1024,12 +868,49 @@ export default function KominkaPage() {
                           className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#8B7355] resize-none" />
                       </div>
 
-                      {/* 路線価・収支分析 */}
+                      {/* 路線価・収支分析（全国エリア区分） */}
                       <div className="border border-[#8B7355]/30 rounded-lg overflow-hidden">
+                        <div className="px-4 py-3 bg-[#8B7355]/5 border-b border-[#8B7355]/20 space-y-2">
+                          <label className="block text-[10px] font-semibold text-gray-500">
+                            エリア区分（試算用・全国目安）
+                          </label>
+                          <select
+                            value={areaTierByProp[prop.id] ?? "auto"}
+                            onChange={(e) => {
+                              const v = e.target.value as AreaTierId | "auto";
+                              setAreaTierByProp((prev) => ({ ...prev, [prop.id]: v }));
+                            }}
+                            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#8B7355]"
+                          >
+                            <option value="auto">
+                              自動（所在地から判定
+                              {prop.location
+                                ? ` → ${AREA_TIERS[detectAreaTier(prop.location)].shortLabel}`
+                                : "・未入力時は地方農村"}
+                              ）
+                            </option>
+                            {(Object.keys(AREA_TIERS) as AreaTierId[]).map((id) => (
+                              <option key={id} value={id}>
+                                {AREA_TIERS[id].label}
+                              </option>
+                            ))}
+                          </select>
+                          <p className="text-[9px] text-gray-400 leading-relaxed">
+                            正確な路線価は
+                            <a
+                              href={ROSENKA_LOOKUP_URL}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-[#8B7355] underline mx-0.5"
+                            >
+                              国税庁 路線価図
+                            </a>
+                            で確認してください。ここでは4区分の概算のみ使います。
+                          </p>
+                        </div>
                         <button
                           onClick={() => analyzeProperty(prop)}
-                          disabled={!prop.location}
-                          className="w-full flex items-center justify-between px-4 py-3 bg-[#8B7355]/10 text-sm font-semibold text-[#8B7355] disabled:opacity-50"
+                          className="w-full flex items-center justify-between px-4 py-3 bg-[#8B7355]/10 text-sm font-semibold text-[#8B7355]"
                         >
                           <span>📊 路線価・収支を計算</span>
                           <span className="text-xs font-normal text-gray-500">タップで即時計算</span>
@@ -1040,6 +921,10 @@ export default function KominkaPage() {
                           const scoreColor = a.overallScore >= 7 ? "text-green-600" : a.overallScore >= 4 ? "text-amber-600" : "text-red-500";
                           return (
                             <div className="p-4 space-y-4">
+                              <p className="text-[10px] text-gray-600 bg-gray-50 rounded-lg px-2.5 py-1.5">
+                                エリア区分: <strong>{a.areaTierLabel}</strong>
+                                {a.tierAutoDetected ? "（所在地から自動）" : "（手動選択）"}
+                              </p>
                               {/* スコア */}
                               <div className="flex items-center gap-3">
                                 <div className="text-center">
@@ -1123,7 +1008,13 @@ export default function KominkaPage() {
                                 </div>
                               </div>
 
-                              <p className="text-[9px] text-gray-400 text-center">※ 公示地価・路線価データを基にした試算です。実際の投資判断は専門家に確認してください。</p>
+                              <p className="text-[9px] text-gray-400 text-center leading-relaxed">
+                                ※ 全国4区分の概算試算です。正確な路線価は
+                                <a href={ROSENKA_LOOKUP_URL} target="_blank" rel="noopener noreferrer" className="text-[#8B7355] underline">
+                                  国税庁
+                                </a>
+                                で確認し、投資判断は専門家へご相談ください。
+                              </p>
                             </div>
                           );
                         })()}
