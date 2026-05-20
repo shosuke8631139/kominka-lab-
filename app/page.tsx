@@ -186,12 +186,13 @@ export default function KominkaPage() {
 
     // 建物価値計算（木造: 法定耐用年数22年、残価率考慮）
     const depRate = Math.max(0, 1 - ageYears / 22);
-    const newBuildCostPerSqm = 180000; // 万円/㎡の新築単価（木造）
-    const buildingValueWan = buildSqm > 0
-      ? Math.round((buildSqm * newBuildCostPerSqm * depRate) / 10000)
+    const newBuildCostPerTsubo = 180000; // 新築坪単価18万円（円/坪・木造の目安）
+    const buildTsubo = buildSqm > 0 ? buildSqm / 3.306 : 0;
+    const buildingValueWan = buildTsubo > 0
+      ? Math.round((buildTsubo * newBuildCostPerTsubo * depRate) / 10000)
       : 0;
     const buildingValueEstimate = buildSqm > 0
-      ? `新築坪単価18万円 × ${Math.round(buildSqm)}㎡ × 残価率${Math.round(depRate * 100)}%（築${ageYears}年）≒ ${buildingValueWan}万円`
+      ? `新築坪単価18万円 × ${buildTsubo.toFixed(1)}坪（${Math.round(buildSqm)}㎡）× 残価率${Math.round(depRate * 100)}%（築${ageYears}年）≒ ${buildingValueWan}万円`
       : "建物面積が未入力のため計算できません";
 
     const totalValueWan = landValueWan + buildingValueWan;
@@ -782,7 +783,7 @@ export default function KominkaPage() {
                 { label: "実質利回り",    vals: active.map(p => analysisMap[p.id] ? `${analysisMap[p.id].netYield.toFixed(1)}%` : "未計算"), bestCol: netBest, higherIsBetter: true },
                 { label: "推定適正価格",  vals: active.map(p => analysisMap[p.id] ? `${analysisMap[p.id].totalValueWan}万円` : "未計算"), bestCol: valBest, higherIsBetter: true },
                 { label: "路線価目安",    vals: active.map(p => analysisMap[p.id] ? `${analysisMap[p.id].routekaPerSqm.toLocaleString()}円/㎡` : "未計算"), bestCol: -1 },
-                { label: "AI総評",        vals: active.map(p => analysisMap[p.id] ? `${analysisMap[p.id].overallScore}/10点` : "未計算"), bestCol: bestIdx(active.map(p => analysisMap[p.id]?.overallScore ?? null), true), higherIsBetter: true },
+                { label: "総合スコア",    vals: active.map(p => analysisMap[p.id] ? `${analysisMap[p.id].overallScore}/10点` : "未計算"), bestCol: bestIdx(active.map(p => analysisMap[p.id]?.overallScore ?? null), true), higherIsBetter: true },
               ];
 
               return (
