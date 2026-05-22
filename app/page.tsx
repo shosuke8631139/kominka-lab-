@@ -26,6 +26,12 @@ import {
   type Prefecture,
 } from "@/data/subsidies";
 import {
+  AKIYA_VACANT_PORTAL_URL,
+  PREFECTURE_REGIONS,
+  PREFECTURE_RESOURCES,
+  type PrefectureRegion,
+} from "@/data/prefecture-resources";
+import {
   AREA_TIERS,
   ROSENKA_LOOKUP_URL,
   analyzePropertyFinancials,
@@ -115,7 +121,11 @@ export default function KominkaPage() {
   const [compareMode, setCompareMode] = useState(false);
   const [subsidyPref, setSubsidyPref] = useState<Prefecture>("鹿児島");
   const [subsidyCity, setSubsidyCity] = useState<string>("");
-  const [showNational, setShowNational] = useState(false);
+  const [showSubsidyPanel, setShowSubsidyPanel] = useState(false);
+  const [subsidyMode, setSubsidyMode] = useState<"detail" | "national">("detail");
+  const [prefRegionFilter, setPrefRegionFilter] = useState<PrefectureRegion | "all">("all");
+  const [selectedPrefId, setSelectedPrefId] = useState("");
+  const [prefSearch, setPrefSearch] = useState("");
   const [showSim, setShowSim] = useState(false);
   const [fetchDraftByProp, setFetchDraftByProp] = useState<Record<string, string>>({});
   const [fetchingPropId, setFetchingPropId] = useState<string | null>(null);
@@ -564,7 +574,7 @@ export default function KominkaPage() {
         {currentStep === "知識" && (
           <div className="space-y-0">
             <p className="text-[10px] text-gray-500 bg-[#F5F4F0] px-4 py-2 leading-relaxed border-b border-gray-100">
-              地価の詳細記事・補助金は鹿児島・宮崎中心。物件タブの収支試算は全国4区分の概算です。
+              地価の詳細記事は鹿児島・宮崎中心。補助金は全国47都道府県の入口＋鹿児島・宮崎の市町村目安。収支試算は全国4区分の概算です。
             </p>
             {/* ===== 学習レベルセレクター ===== */}
             <div className="bg-white border-b border-gray-200 px-4 pt-4 pb-3 space-y-3 sticky top-[109px] z-[5]">
@@ -743,14 +753,166 @@ export default function KominkaPage() {
             {/* 補助金チェッカー（知識タブ内） */}
             <div className="border border-[#8B7355]/30 rounded-xl overflow-hidden">
               <button
-                onClick={() => setShowNational(n => !n)}
+                onClick={() => setShowSubsidyPanel((n) => !n)}
                 className="w-full flex items-center justify-between px-4 py-3 bg-[#8B7355]/10 text-sm font-semibold text-[#8B7355]"
               >
-                <span>🎁 補助金チェッカー</span>
-                <span className="text-xs font-normal text-gray-500">{showNational ? "▲ 閉じる" : "▼ 開く"}</span>
+                <span>🎁 補助金・制度チェッカー</span>
+                <span className="text-xs font-normal text-gray-500">{showSubsidyPanel ? "▲ 閉じる" : "▼ 開く"}</span>
               </button>
-              {showNational && (
+              {showSubsidyPanel && (
                 <div className="p-4 space-y-4">
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSubsidyMode("detail");
+                        setSelectedPrefId("");
+                      }}
+                      className={`flex-1 py-2 rounded-lg text-xs font-semibold border ${
+                        subsidyMode === "detail"
+                          ? "bg-[#8B7355] text-white border-[#8B7355]"
+                          : "bg-white text-gray-600 border-gray-300"
+                      }`}
+                    >
+                      鹿児島・宮崎（詳細）
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSubsidyMode("national");
+                        setSubsidyCity("");
+                      }}
+                      className={`flex-1 py-2 rounded-lg text-xs font-semibold border ${
+                        subsidyMode === "national"
+                          ? "bg-[#8B7355] text-white border-[#8B7355]"
+                          : "bg-white text-gray-600 border-gray-300"
+                      }`}
+                    >
+                      全国47都道府県
+                    </button>
+                  </div>
+
+                  {subsidyMode === "national" ? (
+                    <div className="space-y-3">
+                      <p className="text-[10px] text-amber-700 bg-amber-50 rounded-lg px-3 py-2 leading-relaxed">
+                        都道府県ごとの公式入口です。補助金の上限額は市町村・年度で異なります。鹿児島・宮崎の目安額は「詳細」タブをご利用ください。
+                      </p>
+                      <a
+                        href={AKIYA_VACANT_PORTAL_URL}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="block text-xs font-semibold text-[#8B7355] underline"
+                      >
+                        → 全国 空き家・空き地バンク（国交省）
+                      </a>
+                      <input
+                        type="text"
+                        value={prefSearch}
+                        onChange={(e) => setPrefSearch(e.target.value)}
+                        placeholder="都道府県名で検索"
+                        className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white"
+                      />
+                      <div className="flex gap-1.5 flex-wrap">
+                        <button
+                          type="button"
+                          onClick={() => setPrefRegionFilter("all")}
+                          className={`text-[10px] px-2 py-1 rounded-full border ${
+                            prefRegionFilter === "all"
+                              ? "bg-gray-700 text-white border-gray-700"
+                              : "bg-white border-gray-300"
+                          }`}
+                        >
+                          すべて
+                        </button>
+                        {PREFECTURE_REGIONS.map((r) => (
+                          <button
+                            key={r}
+                            type="button"
+                            onClick={() => setPrefRegionFilter(r)}
+                            className={`text-[10px] px-2 py-1 rounded-full border whitespace-nowrap ${
+                              prefRegionFilter === r
+                                ? "bg-gray-700 text-white border-gray-700"
+                                : "bg-white border-gray-300"
+                            }`}
+                          >
+                            {r}
+                          </button>
+                        ))}
+                      </div>
+                      <div className="grid grid-cols-3 gap-2 max-h-48 overflow-y-auto">
+                        {PREFECTURE_RESOURCES.filter((p) => {
+                          const q = prefSearch.trim();
+                          const matchRegion =
+                            prefRegionFilter === "all" || p.region === prefRegionFilter;
+                          const matchSearch = !q || p.name.includes(q);
+                          return matchRegion && matchSearch;
+                        }).map((p) => (
+                          <button
+                            key={p.id}
+                            type="button"
+                            onClick={() =>
+                              setSelectedPrefId(selectedPrefId === p.id ? "" : p.id)
+                            }
+                            className={`py-2 rounded-lg text-[10px] font-semibold border ${
+                              selectedPrefId === p.id
+                                ? "bg-[#8B7355] text-white border-[#8B7355]"
+                                : "bg-white text-gray-600 border-gray-300"
+                            }`}
+                          >
+                            {p.name.replace(/県|府|都$/, "")}
+                          </button>
+                        ))}
+                      </div>
+                      {selectedPrefId &&
+                        (() => {
+                          const pref = PREFECTURE_RESOURCES.find(
+                            (p) => p.id === selectedPrefId
+                          );
+                          if (!pref) return null;
+                          const housing = pref.housingUrl || pref.portalUrl;
+                          return (
+                            <div className="bg-white border border-gray-100 rounded-xl p-3 space-y-2">
+                              <p className="text-sm font-bold text-gray-800">{pref.name}</p>
+                              <p className="text-[10px] text-gray-600 leading-relaxed">{pref.note}</p>
+                              <a
+                                href={pref.portalUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="block text-xs text-[#8B7355] underline"
+                              >
+                                → {pref.name} 公式サイト
+                              </a>
+                              {housing !== pref.portalUrl && (
+                                <a
+                                  href={housing}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="block text-xs text-[#8B7355] underline"
+                                >
+                                  → 住宅・空き家施策ページ
+                                </a>
+                              )}
+                              {(pref.id === "kagoshima" || pref.id === "miyazaki") && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setSubsidyMode("detail");
+                                    setSubsidyPref(
+                                      pref.id === "kagoshima" ? "鹿児島" : "宮崎"
+                                    );
+                                    setSubsidyCity("");
+                                  }}
+                                  className="text-xs font-semibold text-white bg-[#8B7355] rounded-lg py-2 w-full"
+                                >
+                                  市町村別の補助金目安を見る
+                                </button>
+                              )}
+                            </div>
+                          );
+                        })()}
+                    </div>
+                  ) : (
+                    <>
                   <p className="text-[10px] text-amber-700 bg-amber-50 rounded-lg px-3 py-2 leading-relaxed">※ 市町村別の概要です（鹿児島・宮崎・{SUBSIDIES_DATA_AS_OF}時点の目安）。上限額・要件は制度改廃で変わります。申請前に必ず各自治体の公式サイトで最新情報を確認してください。</p>
                   <div className="flex gap-2">
                     {(["鹿児島", "宮崎"] as Prefecture[]).map(pref => (
@@ -823,6 +985,8 @@ export default function KominkaPage() {
                       ))}
                     </div>
                   </div>
+                    </>
+                  )}
                 </div>
               )}
             </div>
