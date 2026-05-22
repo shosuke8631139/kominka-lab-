@@ -303,7 +303,7 @@ export default function KominkaPage() {
       {/* Header */}
       <header className="bg-white border-b border-gray-200 px-4 py-3 sticky top-0 z-10 flex items-center justify-between">
         <div>
-          <h1 className="text-lg font-bold text-gray-800">🏚️ 古民家プロジェクト</h1>
+          <h1 className="text-lg font-bold text-gray-800">🏚️ 古民家ラボ</h1>
           <p className="text-xs text-gray-500 mt-0.5">
             タスク進捗: {doneCount} / {tasks.length}完了
           </p>
@@ -484,7 +484,7 @@ export default function KominkaPage() {
               </button>
               {showNational && (
                 <div className="p-4 space-y-4">
-                  <p className="text-[10px] text-amber-700 bg-amber-50 rounded-lg px-3 py-2">※ 概要です。申請前に公式サイトで最新情報を必ず確認してください。</p>
+                  <p className="text-[10px] text-amber-700 bg-amber-50 rounded-lg px-3 py-2 leading-relaxed">※ 市町村別の概要です（鹿児島・宮崎）。上限額・要件は制度改廃で変わります。申請前に必ず各自治体の公式サイトで最新情報を確認してください。</p>
                   <div className="flex gap-2">
                     {(["鹿児島", "宮崎"] as Prefecture[]).map(pref => (
                       <button key={pref} onClick={() => { setSubsidyPref(pref); setSubsidyCity(""); }}
@@ -939,7 +939,7 @@ export default function KominkaPage() {
                                 <p className="text-[10px] font-bold text-gray-500 mb-2">📍 土地・物件価値</p>
                                 <div className="grid grid-cols-2 gap-2">
                                   <div className="bg-[#F5F4F0] rounded-lg p-2.5">
-                                    <p className="text-[9px] text-gray-500">推定路線価</p>
+                                    <p className="text-[9px] text-gray-500">土地時価（実勢目安）</p>
                                     <p className="text-sm font-bold text-gray-800">{a.routekaPerSqm ? `${a.routekaPerSqm.toLocaleString()}円/㎡` : "—"}</p>
                                     <p className="text-[9px] text-gray-400 mt-0.5">{a.routekaEstimate}</p>
                                   </div>
@@ -1094,7 +1094,7 @@ export default function KominkaPage() {
                         <input type="number" value={sim.rent} onChange={(e) => setSim({ ...sim, rent: e.target.value })} placeholder="例：3" className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#8B7355]" />
                       </div>
                       <div>
-                        <label className="block text-[10px] text-gray-500 mb-1">譲渡まで（年）</label>
+                        <label className="block text-[10px] text-gray-500 mb-1">運用期間（年）</label>
                         <input type="number" value={sim.years} onChange={(e) => setSim({ ...sim, years: e.target.value })} placeholder="例：10" className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#8B7355]" />
                       </div>
                     </div>
