@@ -371,6 +371,9 @@ export const MUNICIPALITIES: Municipality[] = [
   },
 ];
 
+/** 市町村補助金データの目安時点（制度は変わるため要公式確認） */
+export const SUBSIDIES_DATA_AS_OF = "2026年5月";
+
 /** 都道府県一覧 */
 export const PREFECTURES = ["すべて", "鹿児島", "宮崎"] as const;
 export type Prefecture = typeof PREFECTURES[number];

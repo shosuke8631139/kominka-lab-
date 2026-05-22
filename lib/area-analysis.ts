@@ -1,5 +1,9 @@
+import { parsePriceWan } from "@/lib/parse-price";
+
 /** 全国共通のざっくりエリア区分（詳細な路線価は国税庁で確認） */
 export type AreaTierId = "depopulated" | "rural" | "regional" | "pref_capital";
+
+export { parsePriceWan, parsePriceWanOrNull } from "@/lib/parse-price";
 
 export const ROSENKA_LOOKUP_URL = "https://www.rosenka.nta.go.jp/";
 
@@ -99,6 +103,8 @@ export type PropertyAnalysisInput = {
   landArea: string;
   builtYear: string;
   tierId?: AreaTierId;
+  /** ユーザーがエリア区分を手動選択した場合 true */
+  tierManual?: boolean;
 };
 
 export type PropertyAnalysis = {
@@ -149,19 +155,12 @@ function parseAgeYears(builtStr: string): number {
   return 40;
 }
 
-function parsePriceWan(priceStr: string): number {
-  if (/^(0|無償|無料|格安)$/i.test(priceStr.trim())) return 0;
-  const priceWanMatch = priceStr.match(/([0-9,，]+)\s*万円/);
-  if (priceWanMatch) return parseFloat(priceWanMatch[1].replace(/[,，]/g, ""));
-  return 0;
-}
-
 export function analyzePropertyFinancials(input: PropertyAnalysisInput): PropertyAnalysis {
   const loc = input.location || "";
   const autoTier = detectAreaTier(loc);
   const tierId = input.tierId ?? autoTier;
   const tier = AREA_TIERS[tierId];
-  const tierAutoDetected = !input.tierId || input.tierId === autoTier;
+  const tierAutoDetected = !input.tierManual;
 
   const rosenka = tier.rosenkaPerSqm;
   const market = tier.marketPerSqm;

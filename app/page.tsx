@@ -17,6 +17,7 @@ import {
 import {
   MUNICIPALITIES,
   NATIONAL_SUBSIDIES,
+  SUBSIDIES_DATA_AS_OF,
   type Prefecture,
 } from "@/data/subsidies";
 import {
@@ -24,9 +25,14 @@ import {
   ROSENKA_LOOKUP_URL,
   analyzePropertyFinancials,
   detectAreaTier,
+  parsePriceWan,
+  parsePriceWanOrNull,
   type AreaTierId,
   type PropertyAnalysis,
 } from "@/lib/area-analysis";
+
+const TASK_VERSION = "v2";
+const EXPORT_VERSION = 1;
 
 // 素人→プロの自然な流れ順
 const STEPS = ["知識", "物件", "確認", "タスク", "メモ"] as const;
@@ -43,6 +49,7 @@ interface Memo {
   id: string;
   date: string;
   text: string;
+  propertyId?: string;
 }
 
 const PLATFORMS = ["楽待", "アットホーム", "空き家バンク", "家いちば", "0円物件", "SUUMO", "その他"] as const;
@@ -99,60 +106,147 @@ export default function KominkaPage() {
   const [subsidyCity, setSubsidyCity] = useState<string>("");
   const [showNational, setShowNational] = useState(false);
   const [showSim, setShowSim] = useState(false);
-  const [parseResult, setParseResult] = useState<string | null>(null);
-  const [fetchUrl, setFetchUrl] = useState("");
-  const [fetchLoading, setFetchLoading] = useState(false);
+  const [fetchDraftByProp, setFetchDraftByProp] = useState<Record<string, string>>({});
+  const [fetchingPropId, setFetchingPropId] = useState<string | null>(null);
+  const [parseResultByProp, setParseResultByProp] = useState<Record<string, string>>({});
   const [analysisMap, setAnalysisMap] = useState<Record<string, PropertyAnalysis>>({});
-  /** 物件ごとのエリア区分（auto=所在地から自動） */
   const [areaTierByProp, setAreaTierByProp] = useState<Record<string, AreaTierId | "auto">>({});
+  const [tasksResetNotice, setTasksResetNotice] = useState(false);
+  const [newMemoPropertyId, setNewMemoPropertyId] = useState("");
 
-  const analyzeProperty = (prop: Property, tierOverride?: AreaTierId | "auto") => {
-    const tierKey = tierOverride ?? areaTierByProp[prop.id] ?? "auto";
-    const tierId = tierKey === "auto" ? undefined : tierKey;
+  const persistAnalysis = (map: Record<string, PropertyAnalysis>) => {
+    setAnalysisMap(map);
+    localStorage.setItem("kominka-analysis", JSON.stringify(map));
+  };
+
+  const persistAreaTiers = (map: Record<string, AreaTierId | "auto">) => {
+    setAreaTierByProp(map);
+    localStorage.setItem("kominka-area-tiers", JSON.stringify(map));
+  };
+
+  const analyzeProperty = (prop: Property) => {
+    const tierKey = areaTierByProp[prop.id] ?? "auto";
+    const tierManual = tierKey !== "auto";
     const analysis = analyzePropertyFinancials({
       location: prop.location,
       price: prop.price,
       area: prop.area,
       landArea: prop.landArea,
       builtYear: prop.builtYear,
-      tierId,
+      tierId: tierManual ? tierKey : undefined,
+      tierManual,
     });
-    setAnalysisMap((prev) => ({ ...prev, [prop.id]: analysis }));
+    persistAnalysis({ ...analysisMap, [prop.id]: analysis });
   };
 
   const fetchProperty = async (propId: string) => {
-    if (!fetchUrl.trim().startsWith("http")) {
-      setParseResult("正しいURL（http〜）を入力してください");
+    const prop = properties.find((p) => p.id === propId);
+    const urlToFetch = (fetchDraftByProp[propId] ?? prop?.url ?? "").trim();
+    if (!urlToFetch.startsWith("http")) {
+      setParseResultByProp((prev) => ({
+        ...prev,
+        [propId]: "正しいURL（http〜）を入力してください",
+      }));
       return;
     }
-    setFetchLoading(true);
-    setParseResult(null);
+    setFetchingPropId(propId);
+    setParseResultByProp((prev) => ({ ...prev, [propId]: "" }));
     try {
       const res = await fetch("/api/fetch-property", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url: fetchUrl.trim() }),
+        body: JSON.stringify({ url: urlToFetch }),
       });
       const data = await res.json();
       if (data.error) {
-        setParseResult(`⚠️ ${data.error}`);
+        setParseResultByProp((prev) => ({ ...prev, [propId]: `⚠️ ${data.error}` }));
         return;
       }
       const updates = data.parsed as Partial<Property>;
-      const filled = Object.keys(updates).filter(k => updates[k as keyof Property]);
+      const filled = Object.keys(updates).filter((k) => updates[k as keyof Property]);
       if (filled.length === 0) {
-        setParseResult("情報を読み取れませんでした。手入力してください。");
+        setParseResultByProp((prev) => ({
+          ...prev,
+          [propId]: "情報を読み取れませんでした。手入力してください。",
+        }));
         return;
       }
       updateProperty(propId, updates);
-      const labelMap: Record<string, string> = {name:"物件名",location:"所在地",price:"価格",area:"建物面積",landArea:"土地面積",builtYear:"築年",url:"URL",platform:"サイト",notes:"メモ"};
-      setParseResult(`✓ ${filled.length}項目読み取り（${filled.map(k => labelMap[k]||k).join("・")}）`);
-      setFetchUrl("");
+      const labelMap: Record<string, string> = {
+        name: "物件名",
+        location: "所在地",
+        price: "価格",
+        area: "建物面積",
+        landArea: "土地面積",
+        builtYear: "築年",
+        url: "URL",
+        platform: "サイト",
+        notes: "メモ",
+      };
+      setParseResultByProp((prev) => ({
+        ...prev,
+        [propId]: `✓ ${filled.length}項目読み取り（${filled.map((k) => labelMap[k] || k).join("・")}）`,
+      }));
+      setFetchDraftByProp((prev) => ({ ...prev, [propId]: updates.url ?? urlToFetch }));
     } catch {
-      setParseResult("⚠️ 通信エラーが発生しました");
+      setParseResultByProp((prev) => ({ ...prev, [propId]: "⚠️ 通信エラーが発生しました" }));
     } finally {
-      setFetchLoading(false);
+      setFetchingPropId(null);
     }
+  };
+
+  const exportAllData = () => {
+    const payload = {
+      version: EXPORT_VERSION,
+      exportedAt: new Date().toISOString(),
+      tasks,
+      memos,
+      properties,
+      checkedItems,
+      analysisMap,
+      areaTierByProp,
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `kominka-lab-backup-${new Date().toISOString().slice(0, 10)}.json`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  };
+
+  const importAllData = () => {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = "application/json,.json";
+    input.onchange = async () => {
+      const file = input.files?.[0];
+      if (!file) return;
+      try {
+        const raw = await file.text();
+        const data = JSON.parse(raw) as {
+          tasks?: Task[];
+          memos?: Memo[];
+          properties?: Property[];
+          checkedItems?: Record<string, boolean>;
+          analysisMap?: Record<string, PropertyAnalysis>;
+          areaTierByProp?: Record<string, AreaTierId | "auto">;
+        };
+        if (!confirm("バックアップで現在のデータを上書きします。よろしいですか？")) return;
+        if (data.tasks?.length) saveTasks(data.tasks);
+        if (data.memos) saveMemos(data.memos);
+        if (data.properties) saveProperties(data.properties);
+        if (data.checkedItems) {
+          setCheckedItems(data.checkedItems);
+          localStorage.setItem("kominka-checked", JSON.stringify(data.checkedItems));
+        }
+        if (data.analysisMap) persistAnalysis(data.analysisMap);
+        if (data.areaTierByProp) persistAreaTiers(data.areaTierByProp);
+        alert("データを復元しました");
+      } catch {
+        alert("ファイルの読み込みに失敗しました");
+      }
+    };
+    input.click();
   };
 
 
@@ -165,21 +259,38 @@ export default function KominkaPage() {
   });
 
   useEffect(() => {
-    const TASK_VERSION = "v2";
     const savedVersion = localStorage.getItem("kominka-tasks-version");
     const savedTasks = localStorage.getItem("kominka-tasks");
     const savedMemos = localStorage.getItem("kominka-memos");
     const savedProps = localStorage.getItem("kominka-properties");
     const savedChecked = localStorage.getItem("kominka-checked");
+    const savedAnalysis = localStorage.getItem("kominka-analysis");
+    const savedTiers = localStorage.getItem("kominka-area-tiers");
+
     if (savedTasks && savedVersion === TASK_VERSION) {
       setTasks(JSON.parse(savedTasks));
     } else {
+      if (savedTasks && savedVersion !== TASK_VERSION) setTasksResetNotice(true);
       localStorage.setItem("kominka-tasks-version", TASK_VERSION);
       localStorage.removeItem("kominka-tasks");
     }
     if (savedMemos) setMemos(JSON.parse(savedMemos));
     if (savedProps) setProperties(JSON.parse(savedProps));
     if (savedChecked) setCheckedItems(JSON.parse(savedChecked));
+    if (savedAnalysis) {
+      try {
+        setAnalysisMap(JSON.parse(savedAnalysis));
+      } catch {
+        localStorage.removeItem("kominka-analysis");
+      }
+    }
+    if (savedTiers) {
+      try {
+        setAreaTierByProp(JSON.parse(savedTiers));
+      } catch {
+        localStorage.removeItem("kominka-area-tiers");
+      }
+    }
   }, []);
 
   const saveTasks = (updated: Task[]) => {
@@ -209,8 +320,24 @@ export default function KominkaPage() {
 
   const deleteProperty = (id: string) => {
     if (!confirm("この物件を削除しますか？")) return;
-    saveProperties(properties.filter(p => p.id !== id));
+    saveProperties(properties.filter((p) => p.id !== id));
     if (editingPropId === id) setEditingPropId(null);
+    const nextAnalysis = { ...analysisMap };
+    delete nextAnalysis[id];
+    persistAnalysis(nextAnalysis);
+    const nextTiers = { ...areaTierByProp };
+    delete nextTiers[id];
+    persistAreaTiers(nextTiers);
+    setParseResultByProp((prev) => {
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
+    setFetchDraftByProp((prev) => {
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
   };
 
   const toggleCheck = (id: string) => {
@@ -251,9 +378,16 @@ export default function KominkaPage() {
       id: Date.now().toString(),
       date: new Date().toLocaleDateString("ja-JP"),
       text: newMemo.trim(),
+      ...(newMemoPropertyId ? { propertyId: newMemoPropertyId } : {}),
     };
     saveMemos([memo, ...memos]);
     setNewMemo("");
+    setNewMemoPropertyId("");
+  };
+
+  const propertyLabel = (id: string) => {
+    const p = properties.find((x) => x.id === id);
+    return p?.name || p?.location || "（物件）";
   };
 
   const deleteMemo = (id: string) => {
@@ -301,12 +435,30 @@ export default function KominkaPage() {
   return (
     <div className="min-h-screen bg-[#F5F4F0] flex flex-col">
       {/* Header */}
-      <header className="bg-white border-b border-gray-200 px-4 py-3 sticky top-0 z-10 flex items-center justify-between">
-        <div>
+      <header className="bg-white border-b border-gray-200 px-4 py-3 sticky top-0 z-10 flex items-center justify-between gap-2">
+        <div className="min-w-0">
           <h1 className="text-lg font-bold text-gray-800">🏚️ 古民家ラボ</h1>
           <p className="text-xs text-gray-500 mt-0.5">
             タスク進捗: {doneCount} / {tasks.length}完了
           </p>
+        </div>
+        <div className="flex gap-1 flex-shrink-0">
+          <button
+            type="button"
+            onClick={exportAllData}
+            className="text-[10px] px-2 py-1.5 rounded-lg border border-gray-300 text-gray-600"
+            title="物件・タスク・分析結果をJSONで保存"
+          >
+            書出
+          </button>
+          <button
+            type="button"
+            onClick={importAllData}
+            className="text-[10px] px-2 py-1.5 rounded-lg border border-gray-300 text-gray-600"
+            title="バックアップJSONから復元"
+          >
+            読込
+          </button>
         </div>
       </header>
 
@@ -348,6 +500,9 @@ export default function KominkaPage() {
         {/* ===== PANE 1: 知識ライブラリ ===== */}
         {currentStep === "知識" && (
           <div className="space-y-0">
+            <p className="text-[10px] text-gray-500 bg-[#F5F4F0] px-4 py-2 leading-relaxed border-b border-gray-100">
+              地価の詳細記事・補助金は鹿児島・宮崎中心。物件タブの収支試算は全国4区分の概算です。
+            </p>
             {/* ===== 学習レベルセレクター ===== */}
             <div className="bg-white border-b border-gray-200 px-4 pt-4 pb-3 space-y-3 sticky top-[109px] z-[5]">
               {/* レベル進捗バー */}
@@ -484,7 +639,7 @@ export default function KominkaPage() {
               </button>
               {showNational && (
                 <div className="p-4 space-y-4">
-                  <p className="text-[10px] text-amber-700 bg-amber-50 rounded-lg px-3 py-2 leading-relaxed">※ 市町村別の概要です（鹿児島・宮崎）。上限額・要件は制度改廃で変わります。申請前に必ず各自治体の公式サイトで最新情報を確認してください。</p>
+                  <p className="text-[10px] text-amber-700 bg-amber-50 rounded-lg px-3 py-2 leading-relaxed">※ 市町村別の概要です（鹿児島・宮崎・{SUBSIDIES_DATA_AS_OF}時点の目安）。上限額・要件は制度改廃で変わります。申請前に必ず各自治体の公式サイトで最新情報を確認してください。</p>
                   <div className="flex gap-2">
                     {(["鹿児島", "宮崎"] as Prefecture[]).map(pref => (
                       <button key={pref} onClick={() => { setSubsidyPref(pref); setSubsidyCity(""); }}
@@ -572,13 +727,7 @@ export default function KominkaPage() {
             {compareMode && properties.length >= 2 && (() => {
               const active = properties.filter(p => p.propStatus !== "除外");
 
-              // 数値パーサ
-              const parseWan = (s: string) => {
-                if (!s) return null;
-                if (/無償|0円|無料/.test(s)) return 0;
-                const m = s.match(/([0-9,，]+)/);
-                return m ? parseFloat(m[1].replace(/[,，]/g, "")) : null;
-              };
+              const parseWan = parsePriceWanOrNull;
               const parseSqm = (s: string) => {
                 if (!s) return null;
                 const m = s.match(/([0-9.]+)/);
@@ -751,21 +900,32 @@ export default function KominkaPage() {
                         <p className="text-[10px] text-gray-400">アットホーム・楽待等のURLを貼り付けるだけ</p>
                         <input
                           type="url"
-                          value={fetchUrl}
-                          onChange={(e) => setFetchUrl(e.target.value)}
+                          value={fetchDraftByProp[prop.id] ?? prop.url ?? ""}
+                          onChange={(e) =>
+                            setFetchDraftByProp((prev) => ({ ...prev, [prop.id]: e.target.value }))
+                          }
                           placeholder="https://www.athome.co.jp/..."
                           className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#8B7355] bg-white"
                         />
                         <button
                           onClick={() => fetchProperty(prop.id)}
-                          disabled={!fetchUrl.trim() || fetchLoading}
+                          disabled={
+                            !(fetchDraftByProp[prop.id] ?? prop.url ?? "").trim() ||
+                            fetchingPropId === prop.id
+                          }
                           className="w-full bg-[#8B7355] text-white py-2.5 rounded-lg text-sm font-semibold disabled:opacity-40"
                         >
-                          {fetchLoading ? "読み込み中…" : "情報を取得する"}
+                          {fetchingPropId === prop.id ? "読み込み中…" : "情報を取得する"}
                         </button>
-                        {parseResult && (
-                          <p className={`text-xs text-center font-medium ${parseResult.startsWith("⚠") ? "text-red-500" : "text-green-600"}`}>
-                            {parseResult}
+                        {parseResultByProp[prop.id] && (
+                          <p
+                            className={`text-xs text-center font-medium ${
+                              parseResultByProp[prop.id].startsWith("⚠")
+                                ? "text-red-500"
+                                : "text-green-600"
+                            }`}
+                          >
+                            {parseResultByProp[prop.id]}
                           </p>
                         )}
                         <details className="text-[10px] text-gray-400">
@@ -878,7 +1038,7 @@ export default function KominkaPage() {
                             value={areaTierByProp[prop.id] ?? "auto"}
                             onChange={(e) => {
                               const v = e.target.value as AreaTierId | "auto";
-                              setAreaTierByProp((prev) => ({ ...prev, [prop.id]: v }));
+                              persistAreaTiers({ ...areaTierByProp, [prop.id]: v });
                             }}
                             className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#8B7355]"
                           >
@@ -1054,7 +1214,7 @@ export default function KominkaPage() {
                           const prop = properties.find(p => p.id === e.target.value);
                           if (!prop) return;
                           const ai = analysisMap[prop.id];
-                          const priceNum = parseFloat(prop.price?.replace(/[^0-9.]/g, "") || "0") || 0;
+                          const priceNum = parsePriceWan(prop.price || "");
                           const rentNum = ai?.recommendedRentWan || 0;
                           setSim(prev => ({
                             ...prev,
@@ -1125,7 +1285,9 @@ export default function KominkaPage() {
                         <p className="text-xs text-gray-700">投資額 <strong>{simResult.totalCost.toFixed(0)}万円</strong> に対して月家賃 <strong>{sim.rent}万円</strong> で <strong className="text-[#8B7355]">約{simResult.recoveryYears.toFixed(1)}年</strong> で回収。</p>
                         <p className="text-xs text-gray-700">{simResult.years}年後の累計利回りは <strong className="text-[#8B7355]">{simResult.totalYield.toFixed(0)}%</strong>。{simResult.annualYield >= 15 ? " 高利回りです。" : simResult.annualYield >= 8 ? " 標準的な利回りです。" : " 利回りが低め。改修費・家賃設定を見直してみてください。"}</p>
                       </div>
-                      <p className="text-[9px] text-gray-400 text-center">※ 空室期間・修繕費・税金は含まれていません</p>
+                      <p className="text-[9px] text-gray-400 text-center leading-relaxed">
+                        ※ 空室・修繕費・税金は未反映。物件分析の「実質利回り」（経費28%控除）とは計算方法が異なります。
+                      </p>
                     </div>
                   ) : (
                     <p className="text-center text-sm text-gray-400 py-4">月家賃を入力すると計算結果が表示されます</p>
@@ -1237,6 +1399,20 @@ export default function KominkaPage() {
         {/* ===== PANE 3: タスク・スケジュール ===== */}
         {currentStep === "タスク" && (
           <div className="p-4 space-y-4">
+            {tasksResetNotice && (
+              <div className="bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 flex items-start justify-between gap-2">
+                <p className="text-xs text-amber-800 leading-relaxed">
+                  タスク一覧が更新されたため、保存されていたチェック状態はリセットされました（内容は最新版です）。
+                </p>
+                <button
+                  type="button"
+                  onClick={() => setTasksResetNotice(false)}
+                  className="text-amber-600 text-xs flex-shrink-0"
+                >
+                  ✕
+                </button>
+              </div>
+            )}
             <div className="flex justify-between items-center">
               <p className="text-xs text-gray-500">
                 完了したものにチェックを入れてください。
@@ -1351,6 +1527,25 @@ export default function KominkaPage() {
               現場での気づき・思いついたことをメモしてください。
             </p>
             <div className="bg-white rounded-lg shadow-sm p-4 space-y-3">
+              {properties.length > 0 && (
+                <div>
+                  <label className="block text-[10px] font-semibold text-gray-500 mb-1">
+                    関連物件（任意）
+                  </label>
+                  <select
+                    value={newMemoPropertyId}
+                    onChange={(e) => setNewMemoPropertyId(e.target.value)}
+                    className="w-full border border-gray-300 rounded-lg px-2 py-2 text-sm focus:outline-none focus:border-[#8B7355] bg-white"
+                  >
+                    <option value="">紐づけなし</option>
+                    {properties.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.name || p.location || "未入力"}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
               <textarea
                 value={newMemo}
                 onChange={(e) => setNewMemo(e.target.value)}
@@ -1378,7 +1573,14 @@ export default function KominkaPage() {
                     className="bg-white rounded-lg shadow-sm p-4 flex gap-3"
                   >
                     <div className="flex-1">
-                      <p className="text-[10px] text-gray-400 mb-1">{memo.date}</p>
+                      <p className="text-[10px] text-gray-400 mb-1">
+                        {memo.date}
+                        {memo.propertyId && (
+                          <span className="ml-2 text-[#8B7355]">
+                            🏚️ {propertyLabel(memo.propertyId)}
+                          </span>
+                        )}
+                      </p>
                       <p className="text-sm text-gray-700 leading-relaxed whitespace-pre-wrap">
                         {memo.text}
                       </p>
