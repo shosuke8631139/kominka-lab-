@@ -15,6 +15,11 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "古民家ラボ",
   description: "古民家購入・リノベーションをサポートするツール",
+  manifest: "/manifest.webmanifest",
+  appleWebApp: {
+    capable: true,
+    title: "古民家ラボ",
+  },
 };
 
 export const viewport: Viewport = {

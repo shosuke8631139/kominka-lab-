@@ -11,6 +11,28 @@ export interface KnowledgeItem {
 
 export type LearningLevel = 1 | 2 | 3 | 4;
 
+/** 記事の地域スコープ（未登録＝全国向け） */
+export type ArticleScope = "national" | "kagoshima-miyazaki";
+
+const KAGOSHIMA_MIYAZAKI_ARTICLE_IDS = new Set([
+  "intro-2",
+  "price-1",
+  "price-2",
+  "price-3",
+  "price-5",
+  "price-6",
+  "price-7",
+]);
+
+export function getArticleScope(id: string): ArticleScope {
+  return KAGOSHIMA_MIYAZAKI_ARTICLE_IDS.has(id) ? "kagoshima-miyazaki" : "national";
+}
+
+export const SCOPE_LABELS: Record<ArticleScope, string> = {
+  national: "全国",
+  "kagoshima-miyazaki": "鹿児島・宮崎",
+};
+
 export const LEVEL_META: Record<LearningLevel, { label: string; icon: string; color: string; description: string }> = {
   1: { label: "入門",  icon: "🌱", color: "green",  description: "空き家ビジネスの全体像を掴む。何も知らない状態からスタート。" },
   2: { label: "基礎",  icon: "📘", color: "blue",   description: "数字・相場・補助金・法律の基本を学ぶ。物件を探す前の必須知識。" },
@@ -1716,7 +1738,7 @@ export const CATEGORIES = [
 export const INITIAL_TASKS = [
   // ===== ①事前準備（動く前にやること）=====
   { id: "t1", phase: "①事前準備", text: "目標スペックを決める（予算・エリア・広さ・利回り目標）", done: false },
-  { id: "t2", phase: "①事前準備", text: "鹿屋市・近隣の空き家バンクにユーザー登録する", done: false },
+  { id: "t2", phase: "①事前準備", text: "狙う市区町村・県の空き家バンクにユーザー登録する", done: false },
   { id: "t3", phase: "①事前準備", text: "楽待・アットホーム・みんなの0円物件をブックマークし、新着通知を設定する", done: false },
   { id: "t4", phase: "①事前準備", text: "路線価（国税庁）とエリア相場の目安を把握（知識タブ・物件タブの概算試算）", done: false },
   { id: "t5", phase: "①事前準備", text: "税理士・司法書士のあて（紹介でもOK）を探しておく", done: false },
@@ -1730,7 +1752,7 @@ export const INITIAL_TASKS = [
   { id: "t11", phase: "②物件探し", text: "地元の不動産業者に「ボロ戸建てを探している」と直接伝える", done: false },
   { id: "t12", phase: "②物件探し", text: "Googleマップで周辺の廃墟・明らかな空き家を目視確認する", done: false },
   { id: "t13", phase: "②物件探し", text: "近所の人・知人に空き家情報を聞いてみる", done: false },
-  { id: "t14", phase: "②物件探し", text: "市役所の空き家担当部署に直接相談に行く", done: false },
+  { id: "t14", phase: "②物件探し", text: "市区町村・県の空き家担当に相談する（来庁または電話）", done: false },
 
   // ===== ③内覧・調査 =====
   { id: "t15", phase: "③内覧・調査", text: "外観・屋根・雨漏りのあとを目視確認する", done: false },

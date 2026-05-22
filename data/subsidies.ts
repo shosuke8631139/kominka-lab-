@@ -413,3 +413,22 @@ export const NATIONAL_SUBSIDIES: Subsidy[] = [
     note: "直接申請不可。市町村の補助金がこの制度を活用している場合が多い。",
   },
 ];
+
+/** 全国で使える公式リンク（補助金以外） */
+export const NATIONAL_RESOURCE_LINKS = [
+  {
+    name: "空き家・空き地バンク（国交省）",
+    url: "https://www.akiya-vacant.com/",
+    note: "全国の空き家バンクへの入口。市区町村の制度は各自治体サイトへ",
+  },
+  {
+    name: "路線価図（国税庁）",
+    url: "https://www.rosenka.nta.go.jp/",
+    note: "物件の正確な路線価確認用",
+  },
+  {
+    name: "ハザードマップポータル",
+    url: "https://disaportal.gsi.go.jp/",
+    note: "洪水・土砂災害リスクの確認",
+  },
+] as const;

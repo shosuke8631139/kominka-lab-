@@ -6,6 +6,10 @@ import {
   INITIAL_TASKS,
   LEVEL_MAP,
   LEVEL_META,
+  CATEGORIES,
+  getArticleScope,
+  SCOPE_LABELS,
+  type ArticleScope,
   type KnowledgeItem,
   type LearningLevel,
 } from "@/data/kominka-knowledge";
@@ -17,6 +21,7 @@ import {
 import {
   MUNICIPALITIES,
   NATIONAL_SUBSIDIES,
+  NATIONAL_RESOURCE_LINKS,
   SUBSIDIES_DATA_AS_OF,
   type Prefecture,
 } from "@/data/subsidies";
@@ -32,7 +37,9 @@ import {
 } from "@/lib/area-analysis";
 
 const TASK_VERSION = "v2";
-const EXPORT_VERSION = 1;
+const EXPORT_VERSION = 2;
+const GENERAL_CHECK_KEY = "__general__";
+type CheckedByContext = Record<string, Record<string, boolean>>;
 
 // 素人→プロの自然な流れ順
 const STEPS = ["知識", "物件", "確認", "タスク", "メモ"] as const;
@@ -97,7 +104,11 @@ export default function KominkaPage() {
   const [tasks, setTasks] = useState<Task[]>(INITIAL_TASKS);
   const [memos, setMemos] = useState<Memo[]>([]);
   const [newMemo, setNewMemo] = useState("");
-  const [checkedItems, setCheckedItems] = useState<Record<string, boolean>>({});
+  const [checkedByContext, setCheckedByContext] = useState<CheckedByContext>({});
+  const [inspectContextKey, setInspectContextKey] = useState(GENERAL_CHECK_KEY);
+  const [selectedCategory, setSelectedCategory] = useState("all");
+  const [articleScopeFilter, setArticleScopeFilter] = useState<"all" | ArticleScope>("all");
+  const checkedItems = checkedByContext[inspectContextKey] ?? {};
   const [inspCategory, setInspCategory] = useState("持参するもの");
   const [properties, setProperties] = useState<Property[]>([]);
   const [editingPropId, setEditingPropId] = useState<string | null>(null);
@@ -202,7 +213,7 @@ export default function KominkaPage() {
       tasks,
       memos,
       properties,
-      checkedItems,
+      checkedByContext,
       analysisMap,
       areaTierByProp,
     };
@@ -227,6 +238,7 @@ export default function KominkaPage() {
           tasks?: Task[];
           memos?: Memo[];
           properties?: Property[];
+          checkedByContext?: CheckedByContext;
           checkedItems?: Record<string, boolean>;
           analysisMap?: Record<string, PropertyAnalysis>;
           areaTierByProp?: Record<string, AreaTierId | "auto">;
@@ -235,9 +247,13 @@ export default function KominkaPage() {
         if (data.tasks?.length) saveTasks(data.tasks);
         if (data.memos) saveMemos(data.memos);
         if (data.properties) saveProperties(data.properties);
-        if (data.checkedItems) {
-          setCheckedItems(data.checkedItems);
-          localStorage.setItem("kominka-checked", JSON.stringify(data.checkedItems));
+        if (data.checkedByContext) {
+          setCheckedByContext(data.checkedByContext);
+          localStorage.setItem("kominka-checked-v2", JSON.stringify(data.checkedByContext));
+        } else if (data.checkedItems) {
+          const migrated = { [GENERAL_CHECK_KEY]: data.checkedItems };
+          setCheckedByContext(migrated);
+          localStorage.setItem("kominka-checked-v2", JSON.stringify(migrated));
         }
         if (data.analysisMap) persistAnalysis(data.analysisMap);
         if (data.areaTierByProp) persistAreaTiers(data.areaTierByProp);
@@ -263,6 +279,7 @@ export default function KominkaPage() {
     const savedTasks = localStorage.getItem("kominka-tasks");
     const savedMemos = localStorage.getItem("kominka-memos");
     const savedProps = localStorage.getItem("kominka-properties");
+    const savedCheckedV2 = localStorage.getItem("kominka-checked-v2");
     const savedChecked = localStorage.getItem("kominka-checked");
     const savedAnalysis = localStorage.getItem("kominka-analysis");
     const savedTiers = localStorage.getItem("kominka-area-tiers");
@@ -276,7 +293,19 @@ export default function KominkaPage() {
     }
     if (savedMemos) setMemos(JSON.parse(savedMemos));
     if (savedProps) setProperties(JSON.parse(savedProps));
-    if (savedChecked) setCheckedItems(JSON.parse(savedChecked));
+    if (savedCheckedV2) {
+      try {
+        setCheckedByContext(JSON.parse(savedCheckedV2));
+      } catch {
+        localStorage.removeItem("kominka-checked-v2");
+      }
+    } else if (savedChecked) {
+      try {
+        setCheckedByContext({ [GENERAL_CHECK_KEY]: JSON.parse(savedChecked) });
+      } catch {
+        localStorage.removeItem("kominka-checked");
+      }
+    }
     if (savedAnalysis) {
       try {
         setAnalysisMap(JSON.parse(savedAnalysis));
@@ -340,15 +369,49 @@ export default function KominkaPage() {
     });
   };
 
+  const persistChecked = (store: CheckedByContext) => {
+    setCheckedByContext(store);
+    localStorage.setItem("kominka-checked-v2", JSON.stringify(store));
+  };
+
   const toggleCheck = (id: string) => {
-    const updated = { ...checkedItems, [id]: !checkedItems[id] };
-    setCheckedItems(updated);
-    localStorage.setItem("kominka-checked", JSON.stringify(updated));
+    const ctx = inspectContextKey;
+    const current = checkedByContext[ctx] ?? {};
+    persistChecked({
+      ...checkedByContext,
+      [ctx]: { ...current, [id]: !current[id] },
+    });
   };
 
   const resetChecks = () => {
-    setCheckedItems({});
-    localStorage.removeItem("kominka-checked");
+    if (!confirm("この内覧コンテキストのチェックをすべてリセットしますか？")) return;
+    const next = { ...checkedByContext };
+    delete next[inspectContextKey];
+    persistChecked(next);
+  };
+
+  const propertyLabel = (id: string) => {
+    const p = properties.find((x) => x.id === id);
+    return p?.name || p?.location || "（物件）";
+  };
+
+  const copyChecklistToClipboard = async () => {
+    const lines = INSPECTION_ITEMS.map((item) => {
+      const mark = checkedItems[item.id] ? "☑" : "□";
+      const note = item.note ? `（${item.note}）` : "";
+      return `${mark} [${item.category}] ${item.text}${note}`;
+    });
+    const header =
+      inspectContextKey === GENERAL_CHECK_KEY
+        ? "内覧チェックリスト"
+        : `内覧チェック: ${propertyLabel(inspectContextKey.replace(/^prop-/, ""))}`;
+    const text = `${header}\n${new Date().toLocaleDateString("ja-JP")}\n\n${lines.join("\n")}`;
+    try {
+      await navigator.clipboard.writeText(text);
+      alert("チェックリストをコピーしました（メモ帳等に貼り付けできます）");
+    } catch {
+      alert("コピーに失敗しました");
+    }
   };
 
   const toggleTask = (id: string) => {
@@ -385,11 +448,6 @@ export default function KominkaPage() {
     setNewMemoPropertyId("");
   };
 
-  const propertyLabel = (id: string) => {
-    const p = properties.find((x) => x.id === id);
-    return p?.name || p?.location || "（物件）";
-  };
-
   const deleteMemo = (id: string) => {
     saveMemos(memos.filter((m) => m.id !== id));
   };
@@ -398,13 +456,18 @@ export default function KominkaPage() {
 
   const filtered = KNOWLEDGE_ITEMS.filter((k) => {
     const matchesLevel = getItemLevel(k) === selectedLevel;
+    const matchesCategory =
+      selectedCategory === "all" || k.category === selectedCategory;
+    const scope = getArticleScope(k.id);
+    const matchesScope =
+      articleScopeFilter === "all" || scope === articleScopeFilter;
     const q = searchQuery.trim().toLowerCase();
     const matchesSearch =
       !q ||
       k.title.toLowerCase().includes(q) ||
       k.summary.toLowerCase().includes(q) ||
       k.details.toLowerCase().includes(q);
-    return matchesLevel && matchesSearch;
+    return matchesLevel && matchesCategory && matchesScope && matchesSearch;
   });
 
   const levelCounts = ([1, 2, 3, 4] as LearningLevel[]).map(lv => ({
@@ -544,6 +607,50 @@ export default function KominkaPage() {
                 placeholder="キーワードで検索（例：贈与税、残置物）"
                 className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#8B7355] bg-white"
               />
+
+              <div className="flex gap-1.5 flex-wrap">
+                {(["all", "national", "kagoshima-miyazaki"] as const).map((scope) => (
+                  <button
+                    key={scope}
+                    type="button"
+                    onClick={() => {
+                      setArticleScopeFilter(scope);
+                      setExpandedId(null);
+                    }}
+                    className={`text-[10px] px-2.5 py-1 rounded-full border ${
+                      articleScopeFilter === scope
+                        ? "bg-[#8B7355] text-white border-[#8B7355]"
+                        : "bg-white text-gray-600 border-gray-300"
+                    }`}
+                  >
+                    {scope === "all"
+                      ? "すべて"
+                      : scope === "national"
+                        ? "全国向け"
+                        : "鹿児島・宮崎"}
+                  </button>
+                ))}
+              </div>
+
+              <div className="flex gap-1.5 overflow-x-auto pb-0.5 scrollbar-hide">
+                {CATEGORIES.map((cat) => (
+                  <button
+                    key={cat.id}
+                    type="button"
+                    onClick={() => {
+                      setSelectedCategory(cat.id);
+                      setExpandedId(null);
+                    }}
+                    className={`flex-shrink-0 text-[10px] px-2.5 py-1 rounded-full border whitespace-nowrap ${
+                      selectedCategory === cat.id
+                        ? "bg-gray-700 text-white border-gray-700"
+                        : "bg-white text-gray-600 border-gray-300"
+                    }`}
+                  >
+                    {cat.label}
+                  </button>
+                ))}
+              </div>
             </div>
 
             {/* ===== 記事カード一覧 ===== */}
@@ -571,6 +678,11 @@ export default function KominkaPage() {
                             <span className={`text-[10px] font-medium px-2 py-0.5 rounded-full ${item.category === "warn" ? "text-red-700 bg-red-50" : "text-[#8B7355] bg-[#F5F4F0]"}`}>
                               {item.categoryLabel}
                             </span>
+                            {getArticleScope(item.id) === "kagoshima-miyazaki" && (
+                              <span className="text-[9px] font-medium px-1.5 py-0.5 rounded bg-amber-50 text-amber-800">
+                                {SCOPE_LABELS["kagoshima-miyazaki"]}
+                              </span>
+                            )}
                             <span className="text-[9px] text-gray-400">{idx + 1}/{filtered.length}</span>
                           </div>
                           <p className="mt-1.5 text-sm font-semibold text-gray-800">{item.title}</p>
@@ -693,6 +805,24 @@ export default function KominkaPage() {
                       ))}
                     </div>
                   </details>
+                  <div className="pt-2 border-t border-gray-100">
+                    <p className="text-[10px] font-bold text-gray-600 mb-2">🔗 全国の公式リンク</p>
+                    <div className="space-y-2">
+                      {NATIONAL_RESOURCE_LINKS.map((link) => (
+                        <div key={link.url}>
+                          <a
+                            href={link.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-xs font-semibold text-[#8B7355] underline"
+                          >
+                            {link.name}
+                          </a>
+                          <p className="text-[10px] text-gray-500 mt-0.5">{link.note}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
                 </div>
               )}
             </div>
@@ -1301,7 +1431,24 @@ export default function KominkaPage() {
         {/* ===== PANE 確認: 物件確認チェックリスト ===== */}
         {currentStep === "確認" && (
           <div className="p-4 space-y-3">
-            <div className="flex items-center justify-between">
+            <div className="bg-white rounded-lg p-3 space-y-2 shadow-sm">
+              <label className="block text-[10px] font-semibold text-gray-500">
+                内覧する物件（チェックを物件ごとに保存）
+              </label>
+              <select
+                value={inspectContextKey}
+                onChange={(e) => setInspectContextKey(e.target.value)}
+                className="w-full border border-gray-300 rounded-lg px-2 py-2 text-sm focus:outline-none focus:border-[#8B7355] bg-white"
+              >
+                <option value={GENERAL_CHECK_KEY}>共通（物件を指定しない）</option>
+                {properties.map((p) => (
+                  <option key={p.id} value={`prop-${p.id}`}>
+                    {p.name || p.location || "未入力"}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="flex items-center justify-between gap-2">
               <div>
                 <p className="text-xs text-gray-500">
                   現地を見るときにスマホで開いて使います。
@@ -1310,12 +1457,21 @@ export default function KominkaPage() {
                   チェック済み：{Object.values(checkedItems).filter(Boolean).length} / {INSPECTION_ITEMS.length}項目
                 </p>
               </div>
-              <button
-                onClick={resetChecks}
-                className="text-[10px] text-gray-400 border border-gray-300 rounded-full px-3 py-1"
-              >
-                リセット
-              </button>
+              <div className="flex gap-1.5 flex-shrink-0">
+                <button
+                  type="button"
+                  onClick={copyChecklistToClipboard}
+                  className="text-[10px] text-[#8B7355] border border-[#8B7355]/40 rounded-full px-3 py-1"
+                >
+                  コピー
+                </button>
+                <button
+                  onClick={resetChecks}
+                  className="text-[10px] text-gray-400 border border-gray-300 rounded-full px-3 py-1"
+                >
+                  リセット
+                </button>
+              </div>
             </div>
 
             {/* カテゴリタブ（横スクロール） */}

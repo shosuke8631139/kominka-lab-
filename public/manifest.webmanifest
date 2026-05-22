@@ -1,0 +1,18 @@
+{
+  "name": "古民家ラボ",
+  "short_name": "古民家ラボ",
+  "description": "古民家・空き家の学習・物件比較・内覧チェック",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#F5F4F0",
+  "theme_color": "#8B7355",
+  "lang": "ja",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}
